@@ -409,24 +409,39 @@
 
       <!-- Animation Controls (hidden until animated SVG detected) -->
       <div class="anim-controls" id="anim-controls">
-        <div style="font-family:var(--mono);font-size:0.65rem;color:var(--accent);letter-spacing:0.1em;text-transform:uppercase;">
-          Animated SVG — Frame Capture
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+          <div style="font-family:var(--mono);font-size:0.65rem;color:var(--accent);letter-spacing:0.1em;text-transform:uppercase;">
+            Animated SVG Detected
+          </div>
+          <div id="detected-dur-badge" style="font-family:var(--mono);font-size:0.65rem;color:var(--muted);background:var(--bg);border:1px solid var(--border-hi);padding:2px 10px;border-radius:20px;"></div>
         </div>
+
         <div class="anim-row">
-          <span class="anim-label">Capture at</span>
-          <input type="range" id="frame-time" min="0" max="5000" step="50" value="0" />
+          <span class="anim-label">Preview at</span>
+          <input type="range" id="frame-time" min="0" max="5000" step="10" value="0" />
           <span class="anim-val" id="frame-time-val">0 ms</span>
         </div>
-        <div class="anim-row">
-          <span class="anim-label">Duration</span>
-          <input type="range" id="anim-duration" min="100" max="10000" step="100" value="1000" />
-          <span class="anim-val" id="anim-duration-val">1000 ms</span>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div class="field">
+            <label>Total Duration (ms)</label>
+            <input type="number" id="anim-duration" value="1000" min="100" max="60000" step="100" style="width:100%;" />
+          </div>
+          <div class="field">
+            <label>Frame Count</label>
+            <input type="number" id="frame-count" value="24" min="2" max="240" step="1" style="width:100%;" />
+          </div>
         </div>
+
+        <div style="font-family:var(--mono);font-size:0.63rem;color:var(--muted);line-height:1.6;" id="frame-calc-info">
+          24 frames · ~41.7 ms/frame
+        </div>
+
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-secondary" id="btn-generate-frames" style="font-size:0.7rem;padding:6px 14px;">
-            Generate Strip (10 frames)
+            Preview Strip
           </button>
-          <button class="btn btn-secondary" id="btn-export-all" style="font-size:0.7rem;padding:6px 14px;">
+          <button class="btn btn-primary" id="btn-export-all" style="font-size:0.7rem;padding:6px 14px;">
             Export All Frames (ZIP)
           </button>
         </div>
@@ -526,7 +541,8 @@ const FileLoader = (() => {
 
 /* ═══════════════════════════════════════════════════════
    MODULE: SVGAnalyzer
-   Responsibility: parse SVG, detect animation & dimensions
+   Responsibility: parse SVG, detect animation & measure
+   true total duration from SMIL + CSS sources.
    ═══════════════════════════════════════════════════════ */
 const SVGAnalyzer = (() => {
 
@@ -535,9 +551,9 @@ const SVGAnalyzer = (() => {
     const doc = parser.parseFromString(svgText, 'image/svg+xml');
     const svgEl = doc.documentElement;
 
-    // Dimensions
+    // ── Dimensions ──────────────────────────────────────
     const viewBox = svgEl.getAttribute('viewBox');
-    let w = parseFloat(svgEl.getAttribute('width')) || 0;
+    let w = parseFloat(svgEl.getAttribute('width'))  || 0;
     let h = parseFloat(svgEl.getAttribute('height')) || 0;
     if (viewBox) {
       const parts = viewBox.split(/[\s,]+/).map(Number);
@@ -547,13 +563,110 @@ const SVGAnalyzer = (() => {
     if (!w) w = 300;
     if (!h) h = 300;
 
-    // Animation detection
-    const animTags = ['animate', 'animateTransform', 'animateMotion', 'set'];
-    const hasSMIL = animTags.some(tag => doc.querySelector(tag) !== null);
-    const hasCSSAnim = /<style[\s\S]*?(animation|@keyframes)[\s\S]*?<\/style>/i.test(svgText);
-    const isAnimated = hasSMIL || hasCSSAnim;
+    // ── SMIL animation detection & duration ─────────────
+    const smilTags = ['animate', 'animateTransform', 'animateMotion', 'set'];
+    const smilEls  = smilTags.flatMap(t => [...doc.querySelectorAll(t)]);
+    const hasSMIL  = smilEls.length > 0;
+    let smilDurMs  = 0;
 
-    return { width: w, height: h, isAnimated, svgEl };
+    for (const el of smilEls) {
+      const end = _smilEndMs(el);
+      if (end > smilDurMs) smilDurMs = end;
+    }
+
+    // ── CSS animation detection & duration ──────────────
+    const styleBlocks = [...doc.querySelectorAll('style')].map(s => s.textContent).join('\n');
+    const hasCSSAnim  = /animation[\s\S]*?:|@keyframes/.test(styleBlocks);
+    let cssDurMs = 0;
+
+    if (hasCSSAnim) {
+      // Extract all animation shorthand or animation-duration values
+      // Pattern: animation: name Xs Ys / animation-duration: Xs
+      const durRe = /animation(?:-duration)?\s*:[^;}"']*?([\d.]+)\s*s/gi;
+      const delayRe = /animation(?:-delay)?\s*:[^;}"']*?([\d.]+)\s*s/gi;
+      const iterRe = /animation(?:-iteration-count)?\s*:[^;}"']*?(\d+|infinite)/gi;
+
+      let m;
+      const durations = [];
+      const delays    = [];
+      const iters     = [];
+
+      while ((m = durRe.exec(styleBlocks))   !== null) durations.push(parseFloat(m[1]) * 1000);
+      while ((m = delayRe.exec(styleBlocks)) !== null) delays.push(parseFloat(m[1]) * 1000);
+      while ((m = iterRe.exec(styleBlocks))  !== null) {
+        iters.push(m[1] === 'infinite' ? 1 : parseInt(m[1], 10)); // treat infinite as 1 cycle
+      }
+
+      // Also check ms values
+      const durRems = /animation(?:-duration)?\s*:[^;}"']*?([\d.]+)\s*ms/gi;
+      while ((m = durRems.exec(styleBlocks)) !== null) durations.push(parseFloat(m[1]));
+
+      if (durations.length > 0) {
+        for (let i = 0; i < durations.length; i++) {
+          const iter  = iters[i]  || 1;
+          const delay = delays[i] || 0;
+          const total = delay + durations[i] * iter;
+          if (total > cssDurMs) cssDurMs = total;
+        }
+      }
+    }
+
+    const isAnimated  = hasSMIL || hasCSSAnim;
+    const detectedDurMs = Math.max(smilDurMs, cssDurMs) || (isAnimated ? 2000 : 0);
+
+    return { width: w, height: h, isAnimated, detectedDurMs };
+  }
+
+  // ── SMIL helpers ───────────────────────────────────────
+
+  /**
+   * Compute the end time (ms) of a single SMIL element,
+   * accounting for begin, dur, repeatCount, repeatDur, end.
+   */
+  function _smilEndMs(el) {
+    const dur         = _smilTimeMs(el.getAttribute('dur'))         || 0;
+    const begin       = _smilTimeMs(el.getAttribute('begin'))       || 0;
+    const repeatDur   = _smilTimeMs(el.getAttribute('repeatDur'));
+    const repeatCount = el.getAttribute('repeatCount');
+    const endAttr     = _smilTimeMs(el.getAttribute('end'));
+
+    let active = dur;
+
+    if (repeatDur != null) {
+      active = repeatDur;
+    } else if (repeatCount != null) {
+      if (repeatCount === 'indefinite') {
+        active = dur * 3; // assume 3 cycles for indefinite
+      } else {
+        active = dur * (parseFloat(repeatCount) || 1);
+      }
+    }
+
+    const computed = begin + active;
+    return endAttr != null ? Math.min(computed, endAttr) : computed;
+  }
+
+  /**
+   * Parse a SMIL clock value into milliseconds.
+   * Supports: "2s", "500ms", "00:00:02", "2.5", numeric
+   */
+  function _smilTimeMs(val) {
+    if (!val || val === 'indefinite' || val === 'media') return null;
+    val = val.trim();
+    // HH:MM:SS or MM:SS
+    if (/^\d+:\d+:\d+(\.\d+)?$/.test(val)) {
+      const [h, m, s] = val.split(':').map(parseFloat);
+      return (h * 3600 + m * 60 + s) * 1000;
+    }
+    if (/^\d+:\d+(\.\d+)?$/.test(val)) {
+      const [m, s] = val.split(':').map(parseFloat);
+      return (m * 60 + s) * 1000;
+    }
+    if (/ms$/.test(val)) return parseFloat(val);
+    if (/s$/.test(val))  return parseFloat(val) * 1000;
+    if (/min$/.test(val)) return parseFloat(val) * 60000;
+    const n = parseFloat(val);
+    return isNaN(n) ? null : n * 1000;
   }
 
   return { analyze };
@@ -562,69 +675,180 @@ const SVGAnalyzer = (() => {
 
 /* ═══════════════════════════════════════════════════════
    MODULE: Renderer
-   Responsibility: render SVG text → canvas at time offset
+   Responsibility: render SVG → canvas at an exact time.
+
+   WHY IFRAME:
+   The <img> tag approach always renders t=0 because browsers
+   freeze all animations when an SVG is loaded as an image —
+   no attribute trick or CSS injection can change this.
+
+   The only way to truly seek an SVG animation is to:
+     1. Mount the SVG in a live DOM (hidden iframe).
+     2. Let the browser run the animation engine.
+     3. Seek using:
+        - svgDoc.setCurrentTime(t) for SMIL
+        - animation.currentTime = t for CSS (Web Animations API)
+     4. Re-serialize the seeked SVG DOM back to a string,
+        then draw it to canvas via <img> blob URL — this
+        captures the static visual at that exact frame.
+
+   The iframe is reused across frames (persistent) for speed.
    ═══════════════════════════════════════════════════════ */
 const Renderer = (() => {
 
+  // Persistent hidden iframe — created once, reused for all renders
+  let _iframe = null;
+  let _iframeReady = false;
+  let _pendingResolve = null;
+
+  function _ensureIframe() {
+    if (_iframe) return Promise.resolve();
+    return new Promise(resolve => {
+      _iframe = document.createElement('iframe');
+      _iframe.style.cssText = [
+        'position:fixed', 'top:0', 'left:0',
+        'width:1px', 'height:1px',
+        'opacity:0', 'pointer-events:none',
+        'border:none', 'overflow:hidden',
+      ].join(';');
+      _iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+      _iframe.onload = () => { _iframeReady = true; resolve(); };
+      document.body.appendChild(_iframe);
+      // Write a blank page so we have a document to work with
+      _iframe.srcdoc = '<!DOCTYPE html><html><body></body></html>';
+    });
+  }
+
   /**
-   * Render svgText to an offscreen canvas.
-   * @param {string} svgText   Raw SVG markup
-   * @param {number} outW      Output canvas width  (before scale)
-   * @param {number} outH      Output canvas height (before scale)
-   * @param {number} scale     Pixel ratio (1, 2, 3…)
-   * @param {string} bgColor   CSS color or 'transparent'
-   * @param {number} timeMs    Animation time offset in milliseconds
-   * @returns {Promise<HTMLCanvasElement>}
+   * Render svgText to a canvas at timeMs.
+   * Returns Promise<HTMLCanvasElement>
    */
-  function render(svgText, outW, outH, scale, bgColor, timeMs = 0) {
-    return new Promise((resolve, reject) => {
-      const canvas = document.createElement('canvas');
-      canvas.width  = outW * scale;
-      canvas.height = outH * scale;
-      const ctx = canvas.getContext('2d');
+  async function render(svgText, outW, outH, scale, bgColor, timeMs = 0) {
+    await _ensureIframe();
 
-      if (bgColor && bgColor !== 'transparent') {
-        ctx.fillStyle = bgColor;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Step 1: inject the SVG into the iframe body
+    const iDoc  = _iframe.contentDocument;
+    const iWin  = _iframe.contentWindow;
+
+    // Size the iframe to match SVG so coordinates are correct
+    _iframe.style.width  = outW + 'px';
+    _iframe.style.height = outH + 'px';
+
+    iDoc.open();
+    iDoc.write(`<!DOCTYPE html><html><head><style>
+      html,body{margin:0;padding:0;width:${outW}px;height:${outH}px;overflow:hidden;background:transparent;}
+      svg{display:block;width:${outW}px!important;height:${outH}px!important;}
+    </style></head><body>${svgText}</body></html>`);
+    iDoc.close();
+
+    // Step 2: wait for the SVG to be fully parsed and animations initialised
+    await _waitForLoad(iWin);
+
+    // Step 3: seek to timeMs
+    const timeSec = timeMs / 1000;
+
+    // SMIL: use setCurrentTime on the SVG document
+    const svgEl = iDoc.querySelector('svg');
+    if (svgEl && typeof svgEl.setCurrentTime === 'function') {
+      svgEl.setCurrentTime(timeSec);
+    }
+
+    // CSS: Web Animations API — pause all and seek
+    if (iDoc.getAnimations) {
+      for (const anim of iDoc.getAnimations()) {
+        try {
+          anim.pause();
+          anim.currentTime = timeMs;
+        } catch (e) { /* some animations may not be seekable */ }
       }
+    }
+    // Also try on individual elements (some browsers need this)
+    if (svgEl) {
+      for (const el of svgEl.querySelectorAll('*')) {
+        if (el.getAnimations) {
+          for (const anim of el.getAnimations()) {
+            try { anim.pause(); anim.currentTime = timeMs; } catch (e) {}
+          }
+        }
+      }
+    }
 
-      // Inject currentColor white fallback + freeze animation at timeMs
-      const prepared = _prepareForCapture(svgText, timeMs);
-      const blob = new Blob([prepared], { type: 'image/svg+xml;charset=utf-8' });
+    // Step 4: give the browser one frame to apply the seek
+    await _raf(iWin);
+    await _raf(iWin); // two rAFs for reliability
+
+    // Step 5: serialize the current SVG DOM state back to a string
+    //         so we can draw it via <img> (scripts-off path = safe)
+    const serializer = new XMLSerializer();
+    const seekedSVG  = serializer.serializeToString(svgEl);
+
+    // Step 6: draw to canvas
+    const canvas  = document.createElement('canvas');
+    canvas.width  = outW * scale;
+    canvas.height = outH * scale;
+    const ctx = canvas.getContext('2d');
+
+    if (bgColor && bgColor !== 'transparent') {
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    await _drawSVGToCanvas(ctx, seekedSVG, canvas.width, canvas.height);
+    return canvas;
+  }
+
+  /** Wait for iframe window load (or immediate if already loaded) */
+  function _waitForLoad(iWin) {
+    return new Promise(resolve => {
+      if (iWin.document.readyState === 'complete') {
+        // Still yield one tick so SVG element is in DOM
+        setTimeout(resolve, 20);
+      } else {
+        iWin.addEventListener('load', () => setTimeout(resolve, 20), { once: true });
+      }
+    });
+  }
+
+  /** requestAnimationFrame inside the iframe window */
+  function _raf(iWin) {
+    return new Promise(resolve => iWin.requestAnimationFrame(resolve));
+  }
+
+  /** Draw an SVG string to a canvas context at target dimensions */
+  function _drawSVGToCanvas(ctx, svgString, w, h) {
+    return new Promise((resolve, reject) => {
+      // Ensure the SVG has explicit width/height so browsers render it correctly
+      const sized = svgString
+        .replace(/(<svg\b[^>]*)\bwidth\s*=\s*["'][^"']*["']/i,  '$1')
+        .replace(/(<svg\b[^>]*)\bheight\s*=\s*["'][^"']*["']/i, '$1')
+        .replace(/(<svg\b)/i, `$1 width="${w}" height="${h}" `);
+
+      const blob = new Blob([sized], { type: 'image/svg+xml;charset=utf-8' });
       const url  = URL.createObjectURL(blob);
       const img  = new Image();
-
       img.onload = () => {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, w, h);
         URL.revokeObjectURL(url);
-        resolve(canvas);
+        resolve();
       };
       img.onerror = () => {
         URL.revokeObjectURL(url);
-        reject(new Error('Failed to render SVG as image.'));
+        reject(new Error('Failed to draw serialized SVG frame to canvas'));
       };
       img.src = url;
     });
   }
 
-  /**
-   * Prepare SVG for snapshot: inject explicit dimensions and
-   * pause SMIL/CSS animations at a given time offset.
-   */
-  function _prepareForCapture(svgText, timeMs) {
-    // For CSS animations: inject a style that delays them backward
-    const delayStyle = `<style>
-      * {
-        animation-play-state: paused !important;
-        animation-delay: -${timeMs}ms !important;
-      }
-    </style>`;
-
-    // Insert before closing </svg>
-    return svgText.replace(/<\/svg\s*>/, `${delayStyle}</svg>`);
+  /** Destroy and recreate the iframe (call when loading a new SVG) */
+  function reset() {
+    if (_iframe) {
+      _iframe.remove();
+      _iframe = null;
+      _iframeReady = false;
+    }
   }
 
-  return { render };
+  return { render, reset };
 })();
 
 
@@ -636,14 +860,20 @@ const FrameCapture = (() => {
 
   /**
    * Generate frameCount evenly-spaced frames over durationMs.
-   * Returns array of { canvas, timeMs }
+   * Frame 0 = t=0, frame N-1 = t=durationMs.
+   * @param {Function} [onProgress] called after each frame
+   * Returns array of { canvas, timeMs, index }
    */
-  async function generateFrames(svgText, outW, outH, scale, bgColor, durationMs, frameCount) {
+  async function generateFrames(svgText, outW, outH, scale, bgColor, durationMs, frameCount, onProgress) {
     const frames = [];
     for (let i = 0; i < frameCount; i++) {
-      const t = Math.round((i / (frameCount - 1 || 1)) * durationMs);
+      // Distribute evenly: 0ms … durationMs (inclusive on both ends)
+      const t = (frameCount === 1)
+        ? 0
+        : Math.round((i / (frameCount - 1)) * durationMs);
       const canvas = await Renderer.render(svgText, outW, outH, scale, bgColor, t);
-      frames.push({ canvas, timeMs: t });
+      frames.push({ canvas, timeMs: t, index: i });
+      if (onProgress) onProgress(i + 1, frameCount);
     }
     return frames;
   }
@@ -653,11 +883,12 @@ const FrameCapture = (() => {
    * Uses a tiny self-contained ZIP builder (no external deps).
    */
   async function exportZip(frames, baseName) {
-    const files = await Promise.all(frames.map(async ({ canvas, timeMs }, i) => {
+    const files = await Promise.all(frames.map(async ({ canvas, timeMs, index }) => {
       const blob = await canvasToBlob(canvas);
       const data = await blob.arrayBuffer();
+      const i    = index != null ? index : frames.indexOf(frames.find(f => f.timeMs === timeMs));
       return {
-        name: `${baseName}_frame${String(i + 1).padStart(3, '0')}_${timeMs}ms.png`,
+        name: `${baseName}_f${String(i + 1).padStart(4, '0')}_${timeMs}ms.png`,
         data: new Uint8Array(data),
       };
     }));
@@ -786,51 +1017,56 @@ const FrameCapture = (() => {
    ═══════════════════════════════════════════════════════ */
 const UI = (() => {
   // State
-  let _svgText = null;
+  let _svgText  = null;
   let _fileName = 'output';
-  let _meta = null; // SVGAnalyzer result
+  let _meta     = null; // SVGAnalyzer result
   let _lastCanvas = null;
 
   // DOM refs
   const $ = id => document.getElementById(id);
-  const dropZone     = $('drop-zone');
-  const fileInput    = $('file-input');
-  const svgPreview   = $('svg-preview-container');
-  const svgInfo      = $('svg-info');
-  const animControls = $('anim-controls');
-  const frameTimeEl  = $('frame-time');
-  const frameTimeVal = $('frame-time-val');
-  const animDurEl    = $('anim-duration');
-  const animDurVal   = $('anim-duration-val');
-  const btnConvert   = $('btn-convert');
-  const btnDownload  = $('btn-download');
-  const btnGenFrames = $('btn-generate-frames');
-  const btnExportAll = $('btn-export-all');
-  const frameStrip   = $('frame-strip');
-  const outW         = $('out-width');
-  const outH         = $('out-height');
-  const outScale     = $('out-scale');
-  const bgMode       = $('bg-mode');
-  const customBg     = $('custom-bg');
-  const outputImg    = $('output-img');
-  const outputEmpty  = $('output-empty');
-  const pngInfo      = $('png-info');
+  const dropZone        = $('drop-zone');
+  const fileInput       = $('file-input');
+  const svgPreview      = $('svg-preview-container');
+  const svgInfo         = $('svg-info');
+  const animControls    = $('anim-controls');
+  const frameTimeEl     = $('frame-time');
+  const frameTimeVal    = $('frame-time-val');
+  const animDurEl       = $('anim-duration');
+  const frameCountEl    = $('frame-count');
+  const frameCalcInfo   = $('frame-calc-info');
+  const detectedBadge   = $('detected-dur-badge');
+  const btnConvert      = $('btn-convert');
+  const btnDownload     = $('btn-download');
+  const btnGenFrames    = $('btn-generate-frames');
+  const btnExportAll    = $('btn-export-all');
+  const frameStrip      = $('frame-strip');
+  const outW            = $('out-width');
+  const outH            = $('out-height');
+  const outScale        = $('out-scale');
+  const bgMode          = $('bg-mode');
+  const customBg        = $('custom-bg');
+  const outputImg       = $('output-img');
+  const outputEmpty     = $('output-empty');
+  const pngInfo         = $('png-info');
 
   function init() {
     FileLoader.init(dropZone, fileInput, _onSVGLoaded);
 
-    btnConvert.addEventListener('click', _convertCurrent);
-    btnDownload.addEventListener('click', _downloadPNG);
+    btnConvert.addEventListener('click',   _convertCurrent);
+    btnDownload.addEventListener('click',  _downloadPNG);
     btnGenFrames.addEventListener('click', _generateStrip);
     btnExportAll.addEventListener('click', _exportAllFrames);
 
+    // Preview scrubber
     frameTimeEl.addEventListener('input', () => {
-      frameTimeVal.textContent = `${frameTimeEl.value} ms`;
+      const t = +frameTimeEl.value;
+      frameTimeVal.textContent = `${t} ms`;
     });
-    animDurEl.addEventListener('input', () => {
-      animDurVal.textContent = `${animDurEl.value} ms`;
-      frameTimeEl.max = animDurEl.value;
-    });
+
+    // When duration or frame count changes, update calc info
+    [animDurEl, frameCountEl].forEach(el =>
+      el.addEventListener('input', _updateFrameCalc)
+    );
 
     bgMode.addEventListener('change', () => {
       customBg.style.display = bgMode.value === 'custom' ? 'block' : 'none';
@@ -840,36 +1076,52 @@ const UI = (() => {
   // ── Handlers ────────────────────────────────────────
 
   function _onSVGLoaded(svgText, fileName) {
-    _svgText = svgText;
+    Renderer.reset(); // clear iframe from previous file
+    _svgText  = svgText;
     _fileName = fileName.replace(/\.svg$/i, '');
-    _meta = SVGAnalyzer.analyze(svgText);
+    _meta     = SVGAnalyzer.analyze(svgText);
 
-    // Update drop zone
+    // Update drop zone label
     dropZone.classList.add('has-file');
     dropZone.querySelector('.drop-label').innerHTML =
       `<strong>${fileName}</strong>${_meta.width} × ${_meta.height} px`;
 
-    // Show preview
+    // Show live animated preview via <img> (plays in browser)
     svgPreview.innerHTML = '';
     const blob = new Blob([svgText], { type: 'image/svg+xml' });
     const url  = URL.createObjectURL(blob);
     const img  = new Image();
-    img.onload = () => { URL.revokeObjectURL(url); };
+    img.onload = () => URL.revokeObjectURL(url);
     img.src = url;
-    img.style.maxWidth = '100%';
-    img.style.maxHeight = '280px';
+    img.style.cssText = 'max-width:100%;max-height:280px;';
     svgPreview.appendChild(img);
 
-    svgInfo.textContent = `${_meta.width}×${_meta.height}${_meta.isAnimated ? ' · animated' : ''}`;
+    // Header info
+    const animTag = _meta.isAnimated
+      ? ` · animated · ${_meta.detectedDurMs}ms`
+      : '';
+    svgInfo.textContent = `${_meta.width}×${_meta.height}${animTag}`;
 
     // Sync output size
     outW.value = _meta.width;
     outH.value = _meta.height;
 
-    // Show/hide animation controls
-    animControls.classList.toggle('visible', _meta.isAnimated);
+    // Animation panel
     if (_meta.isAnimated) {
+      animControls.classList.add('visible');
       frameStrip.innerHTML = '';
+
+      // Auto-populate detected duration
+      const dur = _meta.detectedDurMs || 1000;
+      animDurEl.value = dur;
+      frameTimeEl.max = dur;
+      frameTimeEl.value = 0;
+      frameTimeVal.textContent = '0 ms';
+
+      detectedBadge.textContent = `auto-detected: ${dur} ms`;
+      _updateFrameCalc();
+    } else {
+      animControls.classList.remove('visible');
     }
 
     btnConvert.disabled = false;
@@ -880,7 +1132,6 @@ const UI = (() => {
     if (!_svgText) return;
     status('Rendering…', 'busy');
     btnConvert.disabled = true;
-
     try {
       const canvas = await Renderer.render(
         _svgText,
@@ -913,14 +1164,16 @@ const UI = (() => {
 
   async function _generateStrip() {
     if (!_svgText) return;
-    status('Generating frame strip…', 'busy');
+    const dur   = _getDuration();
+    const count = Math.min(+frameCountEl.value || 12, 24); // cap strip at 24 thumbs
+    status(`Generating ${count}-frame strip…`, 'busy');
     btnGenFrames.disabled = true;
     frameStrip.innerHTML = '';
 
     try {
       const frames = await FrameCapture.generateFrames(
         _svgText, +outW.value, +outH.value, 1,
-        _getBgColor(), +animDurEl.value, 10
+        _getBgColor(), dur, count
       );
       for (const { canvas, timeMs } of frames) {
         const thumb = document.createElement('div');
@@ -932,18 +1185,17 @@ const UI = (() => {
         num.textContent = `${timeMs}ms`;
         thumb.appendChild(img);
         thumb.appendChild(num);
-
-        // Click thumb → show in output
         thumb.addEventListener('click', () => {
           _showOutput(canvas);
           _lastCanvas = canvas;
           btnDownload.disabled = false;
           frameTimeEl.value = timeMs;
           frameTimeVal.textContent = `${timeMs} ms`;
+          status(`Previewing frame at ${timeMs}ms`, 'ok');
         });
         frameStrip.appendChild(thumb);
       }
-      status('Frame strip generated. Click a frame to preview.', 'ok');
+      status(`Strip ready — ${count} frames over ${dur}ms. Click any frame to preview.`, 'ok');
     } catch (err) {
       status(`Error: ${err.message}`, 'err');
     } finally {
@@ -953,19 +1205,30 @@ const UI = (() => {
 
   async function _exportAllFrames() {
     if (!_svgText) return;
-    const count = parseInt(prompt('How many frames to export?', '24'), 10);
-    if (!count || count < 2) return;
-    status(`Exporting ${count} frames as ZIP…`, 'busy');
+    const dur   = _getDuration();
+    const count = +frameCountEl.value || 24;
+    if (count < 2) { status('Frame count must be at least 2.', 'err'); return; }
+
+    status(`Rendering ${count} frames over ${dur}ms…`, 'busy');
     btnExportAll.disabled = true;
+
+    // Show progress in status
+    let done = 0;
+    const onProgress = () => {
+      done++;
+      status(`Rendering frame ${done}/${count}…`, 'busy');
+    };
 
     try {
       const frames = await FrameCapture.generateFrames(
         _svgText, +outW.value, +outH.value, +outScale.value,
-        _getBgColor(), +animDurEl.value, count
+        _getBgColor(), dur, count,
+        onProgress
       );
+      status('Packing ZIP…', 'busy');
       await FrameCapture.exportZip(frames, _fileName);
       toast(`${count} frames exported!`);
-      status(`ZIP with ${count} PNGs downloaded.`, 'ok');
+      status(`ZIP with ${count} PNGs downloaded (${dur}ms, ~${Math.round(dur/count)}ms/frame).`, 'ok');
     } catch (err) {
       status(`Error: ${err.message}`, 'err');
     } finally {
@@ -974,6 +1237,10 @@ const UI = (() => {
   }
 
   // ── Helpers ─────────────────────────────────────────
+
+  function _getDuration() {
+    return Math.max(+animDurEl.value || 1000, 1);
+  }
 
   function _getBgColor() {
     const m = bgMode.value;
@@ -990,7 +1257,21 @@ const UI = (() => {
     pngInfo.textContent = `${canvas.width}×${canvas.height}px`;
   }
 
-  // ── Public helpers ──────────────────────────────────
+  function _updateFrameCalc() {
+    const dur   = +animDurEl.value || 1000;
+    const count = +frameCountEl.value || 24;
+    const step  = (count > 1) ? (dur / (count - 1)) : dur;
+    frameCalcInfo.textContent =
+      `${count} frames · ${step.toFixed(1)} ms/frame · total ${dur}ms`;
+    // Keep scrubber max in sync
+    frameTimeEl.max = dur;
+    if (+frameTimeEl.value > dur) {
+      frameTimeEl.value = dur;
+      frameTimeVal.textContent = `${dur} ms`;
+    }
+  }
+
+  // ── Public ──────────────────────────────────────────
 
   function status(msg, type = '') {
     $('status-msg').textContent = msg;
@@ -1002,7 +1283,7 @@ const UI = (() => {
     const t = $('toast');
     t.textContent = msg;
     t.classList.add('show');
-    setTimeout(() => t.classList.remove('show'), 2200);
+    setTimeout(() => t.classList.remove('show'), 2400);
   }
 
   return { init, status, toast };
