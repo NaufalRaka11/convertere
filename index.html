@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SVG → PNG Converter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ─── Design Tokens ─────────────────────────────────── */
+    :root {
+      --bg:        #0c0c0e;
+      --surface:   #131316;
+      --border:    #232328;
+      --border-hi: #3a3a42;
+      --accent:    #e8ff47;
+      --accent-dim:#b8cc2a;
+      --text:      #f0f0f0;
+      --muted:     #6b6b7a;
+      --danger:    #ff5555;
+      --success:   #47ffb2;
+      --radius:    10px;
+      --mono:      'Space Mono', monospace;
+      --sans:      'DM Sans', sans-serif;
+    }
+
+    /* ─── Reset ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 16px; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ─── Layout ─────────────────────────────────────────── */
+    header {
+      border-bottom: 1px solid var(--border);
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .logo {
+      font-family: var(--mono);
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    .logo span { color: var(--accent); }
+    .badge {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      background: #1e1e24;
+      border: 1px solid var(--border-hi);
+      padding: 2px 8px;
+      border-radius: 20px;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto 1fr;
+      gap: 0;
+      max-width: 1200px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 32px;
+      gap: 20px;
+    }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel-header {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .panel-body { padding: 20px; flex: 1; }
+
+    /* ─── Controls (spans full width) ───────────────────── */
+    .controls-row {
+      grid-column: 1 / -1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      align-items: flex-end;
+    }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    label {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    input[type="number"], select {
+      background: var(--bg);
+      border: 1px solid var(--border-hi);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      padding: 8px 12px;
+      border-radius: 6px;
+      outline: none;
+      width: 110px;
+      transition: border-color 0.15s;
+    }
+    input[type="number"]:focus, select:focus { border-color: var(--accent); }
+    select { width: 150px; cursor: pointer; }
+    .btn {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      padding: 9px 20px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary { background: var(--accent); color: #0c0c0e; }
+    .btn-primary:hover { opacity: 0.88; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border-hi);
+    }
+    .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+    .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .btn-group { display: flex; gap: 8px; align-items: flex-end; }
+
+    /* ─── Drop Zone ─────────────────────────────────────── */
+    .drop-zone {
+      border: 2px dashed var(--border-hi);
+      border-radius: var(--radius);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 40px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      min-height: 180px;
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(232,255,71,0.03);
+    }
+    .drop-zone.has-file { border-style: solid; border-color: var(--border-hi); }
+    .drop-icon { font-size: 2rem; line-height: 1; }
+    .drop-label {
+      font-size: 0.9rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .drop-label strong { color: var(--text); display: block; font-weight: 500; }
+    #file-input { display: none; }
+
+    /* ─── SVG Preview ───────────────────────────────────── */
+    .preview-box {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: repeating-conic-gradient(#1a1a20 0% 25%, transparent 0% 50%) 0 0 / 18px 18px;
+      border-radius: 6px;
+      min-height: 220px;
+      overflow: hidden;
+      position: relative;
+    }
+    .preview-box img, .preview-box svg {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    #svg-preview-container {
+      width: 100%; height: 100%;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #svg-preview-container svg { max-width: 100%; max-height: 280px; }
+
+    /* ─── Animation Controls ────────────────────────────── */
+    .anim-controls {
+      margin-top: 12px;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .anim-controls.visible { display: flex; }
+    .anim-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .anim-label {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--muted);
+      min-width: 80px;
+    }
+    input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent);
+      min-width: 100px;
+    }
+    .anim-val {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--accent);
+      min-width: 45px;
+      text-align: right;
+    }
+
+    /* ─── Frame Strip ───────────────────────────────────── */
+    .frame-strip {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .frame-thumb {
+      border: 2px solid var(--border);
+      border-radius: 5px;
+      cursor: pointer;
+      overflow: hidden;
+      transition: border-color 0.15s;
+      background: #1a1a20;
+    }
+    .frame-thumb:hover { border-color: var(--accent); }
+    .frame-thumb img { display: block; width: 64px; height: 64px; object-fit: contain; }
+    .frame-thumb .frame-num {
+      font-family: var(--mono);
+      font-size: 0.55rem;
+      color: var(--muted);
+      text-align: center;
+      padding: 2px 0;
+    }
+
+    /* ─── Output Panel ──────────────────────────────────── */
+    #output-canvas { display: none; }
+    .output-preview {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 220px;
+      background: repeating-conic-gradient(#1a1a20 0% 25%, transparent 0% 50%) 0 0 / 18px 18px;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    #output-img {
+      max-width: 100%;
+      max-height: 280px;
+      object-fit: contain;
+      display: none;
+    }
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .empty-icon { font-size: 1.8rem; opacity: 0.4; }
+
+    /* ─── Status Bar ─────────────────────────────────────── */
+    .status-bar {
+      grid-column: 1 / -1;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+      padding: 10px 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+    .status-dot.ok { background: var(--success); }
+    .status-dot.err { background: var(--danger); }
+    .status-dot.busy {
+      background: var(--accent);
+      animation: pulse 0.8s ease-in-out infinite alternate;
+    }
+    @keyframes pulse { to { opacity: 0.3; } }
+
+    /* ─── Toast ──────────────────────────────────────────── */
+    .toast {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(10px);
+      background: var(--surface);
+      border: 1px solid var(--border-hi);
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s, transform 0.2s;
+      z-index: 100;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ─── Responsive ─────────────────────────────────────── */
+    @media (max-width: 750px) {
+      main { grid-template-columns: 1fr; padding: 16px; }
+      .controls-row { grid-column: 1; }
+      .status-bar { grid-column: 1; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">SVG<span>→</span>PNG</div>
+  <span class="badge">Converter</span>
+</header>
+
+<main>
+
+  <!-- ── Controls Row ── -->
+  <div class="controls-row">
+    <div class="field">
+      <label>Width (px)</label>
+      <input type="number" id="out-width" value="512" min="1" max="8192" />
+    </div>
+    <div class="field">
+      <label>Height (px)</label>
+      <input type="number" id="out-height" value="512" min="1" max="8192" />
+    </div>
+    <div class="field">
+      <label>Scale</label>
+      <select id="out-scale">
+        <option value="1">1× (original)</option>
+        <option value="2" selected>2× (retina)</option>
+        <option value="3">3× (hi-res)</option>
+        <option value="4">4×</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Background</label>
+      <select id="bg-mode">
+        <option value="transparent">Transparent</option>
+        <option value="white">White</option>
+        <option value="black">Black</option>
+        <option value="custom">Custom…</option>
+      </select>
+    </div>
+    <input type="color" id="custom-bg" value="#ffffff" style="display:none;width:40px;height:36px;border:none;background:none;cursor:pointer;border-radius:6px;" />
+    <div class="btn-group">
+      <button class="btn btn-primary" id="btn-convert" disabled>Convert</button>
+      <button class="btn btn-secondary" id="btn-download" disabled>Download PNG</button>
+    </div>
+  </div>
+
+  <!-- ── Input Panel ── -->
+  <div class="panel">
+    <div class="panel-header">
+      <span>Input · SVG</span>
+      <span id="svg-info" style="color:var(--accent);font-size:0.65rem;"></span>
+    </div>
+    <div class="panel-body" style="display:flex;flex-direction:column;gap:16px;">
+
+      <div class="drop-zone" id="drop-zone">
+        <div class="drop-icon">⬡</div>
+        <div class="drop-label">
+          <strong>Drop SVG file here</strong>
+          or click to browse
+        </div>
+        <input type="file" id="file-input" accept=".svg,image/svg+xml" />
+      </div>
+
+      <div class="preview-box" style="flex:1;min-height:200px;">
+        <div id="svg-preview-container">
+          <div class="empty-state">
+            <div class="empty-icon">⬡</div>
+            <span>No SVG loaded</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Animation Controls (hidden until animated SVG detected) -->
+      <div class="anim-controls" id="anim-controls">
+        <div style="font-family:var(--mono);font-size:0.65rem;color:var(--accent);letter-spacing:0.1em;text-transform:uppercase;">
+          Animated SVG — Frame Capture
+        </div>
+        <div class="anim-row">
+          <span class="anim-label">Capture at</span>
+          <input type="range" id="frame-time" min="0" max="5000" step="50" value="0" />
+          <span class="anim-val" id="frame-time-val">0 ms</span>
+        </div>
+        <div class="anim-row">
+          <span class="anim-label">Duration</span>
+          <input type="range" id="anim-duration" min="100" max="10000" step="100" value="1000" />
+          <span class="anim-val" id="anim-duration-val">1000 ms</span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-secondary" id="btn-generate-frames" style="font-size:0.7rem;padding:6px 14px;">
+            Generate Strip (10 frames)
+          </button>
+          <button class="btn btn-secondary" id="btn-export-all" style="font-size:0.7rem;padding:6px 14px;">
+            Export All Frames (ZIP)
+          </button>
+        </div>
+        <div class="frame-strip" id="frame-strip"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Output Panel ── -->
+  <div class="panel">
+    <div class="panel-header">
+      <span>Output · PNG</span>
+      <span id="png-info" style="color:var(--muted);font-size:0.65rem;"></span>
+    </div>
+    <div class="panel-body" style="display:flex;flex-direction:column;gap:16px;">
+      <div class="output-preview">
+        <img id="output-img" alt="PNG output" />
+        <div class="empty-state" id="output-empty">
+          <div class="empty-icon">◻</div>
+          <span>PNG will appear here</span>
+        </div>
+      </div>
+      <canvas id="output-canvas"></canvas>
+    </div>
+  </div>
+
+  <!-- ── Status Bar ── -->
+  <div class="status-bar">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-msg">Ready. Drop an SVG to begin.</span>
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<!-- ─── Scripts ──────────────────────────────────────── -->
+<script>
+/**
+ * SVG → PNG Converter
+ * ───────────────────
+ * Module layout:
+ *   FileLoader   – handles file drag-drop / input
+ *   SVGAnalyzer  – detects animation, reads viewBox/dimensions
+ *   Renderer     – rasterises SVG → canvas at any time offset
+ *   FrameCapture – generates frame strips + ZIP export
+ *   UI           – wires DOM, delegates to modules above
+ *
+ * Add new modules (e.g. GIF encoder, AVIF, WEBP) without
+ * touching existing ones — just import and connect in UI.
+ */
+
+/* ═══════════════════════════════════════════════════════
+   MODULE: FileLoader
+   Responsibility: accept SVG via drag-drop or <input>
+   ═══════════════════════════════════════════════════════ */
+const FileLoader = (() => {
+  let _onLoad = null; // callback(svgText, fileName)
+
+  function init(dropZoneEl, fileInputEl, onLoad) {
+    _onLoad = onLoad;
+
+    dropZoneEl.addEventListener('click', () => fileInputEl.click());
+    fileInputEl.addEventListener('change', e => {
+      if (e.target.files[0]) _readFile(e.target.files[0]);
+    });
+
+    dropZoneEl.addEventListener('dragover', e => {
+      e.preventDefault();
+      dropZoneEl.classList.add('drag-over');
+    });
+    dropZoneEl.addEventListener('dragleave', () => {
+      dropZoneEl.classList.remove('drag-over');
+    });
+    dropZoneEl.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZoneEl.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file && (file.type === 'image/svg+xml' || file.name.endsWith('.svg'))) {
+        _readFile(file);
+      } else {
+        UI.status('Only SVG files are accepted.', 'err');
+      }
+    });
+  }
+
+  function _readFile(file) {
+    const reader = new FileReader();
+    reader.onload = e => _onLoad(e.target.result, file.name);
+    reader.readAsText(file);
+  }
+
+  return { init };
+})();
+
+
+/* ═══════════════════════════════════════════════════════
+   MODULE: SVGAnalyzer
+   Responsibility: parse SVG, detect animation & dimensions
+   ═══════════════════════════════════════════════════════ */
+const SVGAnalyzer = (() => {
+
+  function analyze(svgText) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(svgText, 'image/svg+xml');
+    const svgEl = doc.documentElement;
+
+    // Dimensions
+    const viewBox = svgEl.getAttribute('viewBox');
+    let w = parseFloat(svgEl.getAttribute('width')) || 0;
+    let h = parseFloat(svgEl.getAttribute('height')) || 0;
+    if (viewBox) {
+      const parts = viewBox.split(/[\s,]+/).map(Number);
+      if (!w) w = parts[2] || 300;
+      if (!h) h = parts[3] || 300;
+    }
+    if (!w) w = 300;
+    if (!h) h = 300;
+
+    // Animation detection
+    const animTags = ['animate', 'animateTransform', 'animateMotion', 'set'];
+    const hasSMIL = animTags.some(tag => doc.querySelector(tag) !== null);
+    const hasCSSAnim = /<style[\s\S]*?(animation|@keyframes)[\s\S]*?<\/style>/i.test(svgText);
+    const isAnimated = hasSMIL || hasCSSAnim;
+
+    return { width: w, height: h, isAnimated, svgEl };
+  }
+
+  return { analyze };
+})();
+
+
+/* ═══════════════════════════════════════════════════════
+   MODULE: Renderer
+   Responsibility: render SVG text → canvas at time offset
+   ═══════════════════════════════════════════════════════ */
+const Renderer = (() => {
+
+  /**
+   * Render svgText to an offscreen canvas.
+   * @param {string} svgText   Raw SVG markup
+   * @param {number} outW      Output canvas width  (before scale)
+   * @param {number} outH      Output canvas height (before scale)
+   * @param {number} scale     Pixel ratio (1, 2, 3…)
+   * @param {string} bgColor   CSS color or 'transparent'
+   * @param {number} timeMs    Animation time offset in milliseconds
+   * @returns {Promise<HTMLCanvasElement>}
+   */
+  function render(svgText, outW, outH, scale, bgColor, timeMs = 0) {
+    return new Promise((resolve, reject) => {
+      const canvas = document.createElement('canvas');
+      canvas.width  = outW * scale;
+      canvas.height = outH * scale;
+      const ctx = canvas.getContext('2d');
+
+      if (bgColor && bgColor !== 'transparent') {
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      // Inject currentColor white fallback + freeze animation at timeMs
+      const prepared = _prepareForCapture(svgText, timeMs);
+      const blob = new Blob([prepared], { type: 'image/svg+xml;charset=utf-8' });
+      const url  = URL.createObjectURL(blob);
+      const img  = new Image();
+
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        resolve(canvas);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Failed to render SVG as image.'));
+      };
+      img.src = url;
+    });
+  }
+
+  /**
+   * Prepare SVG for snapshot: inject explicit dimensions and
+   * pause SMIL/CSS animations at a given time offset.
+   */
+  function _prepareForCapture(svgText, timeMs) {
+    // For CSS animations: inject a style that delays them backward
+    const delayStyle = `<style>
+      * {
+        animation-play-state: paused !important;
+        animation-delay: -${timeMs}ms !important;
+      }
+    </style>`;
+
+    // Insert before closing </svg>
+    return svgText.replace(/<\/svg\s*>/, `${delayStyle}</svg>`);
+  }
+
+  return { render };
+})();
+
+
+/* ═══════════════════════════════════════════════════════
+   MODULE: FrameCapture
+   Responsibility: generate N frames, offer ZIP download
+   ═══════════════════════════════════════════════════════ */
+const FrameCapture = (() => {
+
+  /**
+   * Generate frameCount evenly-spaced frames over durationMs.
+   * Returns array of { canvas, timeMs }
+   */
+  async function generateFrames(svgText, outW, outH, scale, bgColor, durationMs, frameCount) {
+    const frames = [];
+    for (let i = 0; i < frameCount; i++) {
+      const t = Math.round((i / (frameCount - 1 || 1)) * durationMs);
+      const canvas = await Renderer.render(svgText, outW, outH, scale, bgColor, t);
+      frames.push({ canvas, timeMs: t });
+    }
+    return frames;
+  }
+
+  /**
+   * Pack frames as individual PNGs into a ZIP and trigger download.
+   * Uses a tiny self-contained ZIP builder (no external deps).
+   */
+  async function exportZip(frames, baseName) {
+    const files = await Promise.all(frames.map(async ({ canvas, timeMs }, i) => {
+      const blob = await canvasToBlob(canvas);
+      const data = await blob.arrayBuffer();
+      return {
+        name: `${baseName}_frame${String(i + 1).padStart(3, '0')}_${timeMs}ms.png`,
+        data: new Uint8Array(data),
+      };
+    }));
+
+    const zip = buildZip(files);
+    const zipBlob = new Blob([zip], { type: 'application/zip' });
+    triggerDownload(zipBlob, `${baseName}_frames.zip`);
+  }
+
+  function canvasToBlob(canvas) {
+    return new Promise(res => canvas.toBlob(res, 'image/png'));
+  }
+
+  // ── Minimal ZIP builder ──────────────────────────────
+  // Implements STORE (no compression) ZIP — tiny and dependency-free.
+  function buildZip(files) {
+    const enc = new TextEncoder();
+    const localHeaders = [];
+    const centralDir = [];
+    let offset = 0;
+
+    for (const file of files) {
+      const nameBytes = enc.encode(file.name);
+      const crc = crc32(file.data);
+      const size = file.data.length;
+
+      // Local file header
+      const lh = new Uint8Array(30 + nameBytes.length);
+      const lv = new DataView(lh.buffer);
+      lv.setUint32(0, 0x04034b50, true);   // signature
+      lv.setUint16(4, 20, true);             // version needed
+      lv.setUint16(6, 0, true);              // flags
+      lv.setUint16(8, 0, true);              // compression (STORE)
+      lv.setUint16(10, 0, true);             // mod time
+      lv.setUint16(12, 0, true);             // mod date
+      lv.setUint32(14, crc, true);           // CRC-32
+      lv.setUint32(18, size, true);          // compressed
+      lv.setUint32(22, size, true);          // uncompressed
+      lv.setUint16(26, nameBytes.length, true);
+      lv.setUint16(28, 0, true);             // extra
+      lh.set(nameBytes, 30);
+
+      localHeaders.push(lh, file.data);
+
+      // Central directory entry
+      const cd = new Uint8Array(46 + nameBytes.length);
+      const cv = new DataView(cd.buffer);
+      cv.setUint32(0, 0x02014b50, true);   // signature
+      cv.setUint16(4, 20, true);
+      cv.setUint16(6, 20, true);
+      cv.setUint16(8, 0, true);
+      cv.setUint16(10, 0, true);
+      cv.setUint16(12, 0, true);
+      cv.setUint16(14, 0, true);
+      cv.setUint32(16, crc, true);
+      cv.setUint32(20, size, true);
+      cv.setUint32(24, size, true);
+      cv.setUint16(28, nameBytes.length, true);
+      cv.setUint16(30, 0, true);
+      cv.setUint16(32, 0, true);
+      cv.setUint16(34, 0, true);
+      cv.setUint16(36, 0, true);
+      cv.setUint32(38, 0, true);
+      cv.setUint32(42, offset, true);
+      cd.set(nameBytes, 46);
+
+      centralDir.push(cd);
+      offset += lh.length + size;
+    }
+
+    const cdSize = centralDir.reduce((a, c) => a + c.length, 0);
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true);
+    ev.setUint16(4, 0, true);
+    ev.setUint16(6, 0, true);
+    ev.setUint16(8, files.length, true);
+    ev.setUint16(10, files.length, true);
+    ev.setUint32(12, cdSize, true);
+    ev.setUint32(16, offset, true);
+    ev.setUint16(20, 0, true);
+
+    return concat([...localHeaders, ...centralDir, eocd]);
+  }
+
+  function concat(parts) {
+    const total = parts.reduce((a, b) => a + b.length, 0);
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const p of parts) { out.set(p, off); off += p.length; }
+    return out;
+  }
+
+  // CRC-32 table
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let j = 0; j < 8; j++) c = (c & 1) ? 0xedb88320 ^ (c >>> 1) : (c >>> 1);
+      t[i] = c;
+    }
+    return t;
+  })();
+
+  function crc32(data) {
+    let c = 0xffffffff;
+    for (const byte of data) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  }
+
+  function triggerDownload(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  return { generateFrames, exportZip };
+})();
+
+
+/* ═══════════════════════════════════════════════════════
+   MODULE: UI
+   Responsibility: wire DOM events, coordinate modules
+   ═══════════════════════════════════════════════════════ */
+const UI = (() => {
+  // State
+  let _svgText = null;
+  let _fileName = 'output';
+  let _meta = null; // SVGAnalyzer result
+  let _lastCanvas = null;
+
+  // DOM refs
+  const $ = id => document.getElementById(id);
+  const dropZone     = $('drop-zone');
+  const fileInput    = $('file-input');
+  const svgPreview   = $('svg-preview-container');
+  const svgInfo      = $('svg-info');
+  const animControls = $('anim-controls');
+  const frameTimeEl  = $('frame-time');
+  const frameTimeVal = $('frame-time-val');
+  const animDurEl    = $('anim-duration');
+  const animDurVal   = $('anim-duration-val');
+  const btnConvert   = $('btn-convert');
+  const btnDownload  = $('btn-download');
+  const btnGenFrames = $('btn-generate-frames');
+  const btnExportAll = $('btn-export-all');
+  const frameStrip   = $('frame-strip');
+  const outW         = $('out-width');
+  const outH         = $('out-height');
+  const outScale     = $('out-scale');
+  const bgMode       = $('bg-mode');
+  const customBg     = $('custom-bg');
+  const outputImg    = $('output-img');
+  const outputEmpty  = $('output-empty');
+  const pngInfo      = $('png-info');
+
+  function init() {
+    FileLoader.init(dropZone, fileInput, _onSVGLoaded);
+
+    btnConvert.addEventListener('click', _convertCurrent);
+    btnDownload.addEventListener('click', _downloadPNG);
+    btnGenFrames.addEventListener('click', _generateStrip);
+    btnExportAll.addEventListener('click', _exportAllFrames);
+
+    frameTimeEl.addEventListener('input', () => {
+      frameTimeVal.textContent = `${frameTimeEl.value} ms`;
+    });
+    animDurEl.addEventListener('input', () => {
+      animDurVal.textContent = `${animDurEl.value} ms`;
+      frameTimeEl.max = animDurEl.value;
+    });
+
+    bgMode.addEventListener('change', () => {
+      customBg.style.display = bgMode.value === 'custom' ? 'block' : 'none';
+    });
+  }
+
+  // ── Handlers ────────────────────────────────────────
+
+  function _onSVGLoaded(svgText, fileName) {
+    _svgText = svgText;
+    _fileName = fileName.replace(/\.svg$/i, '');
+    _meta = SVGAnalyzer.analyze(svgText);
+
+    // Update drop zone
+    dropZone.classList.add('has-file');
+    dropZone.querySelector('.drop-label').innerHTML =
+      `<strong>${fileName}</strong>${_meta.width} × ${_meta.height} px`;
+
+    // Show preview
+    svgPreview.innerHTML = '';
+    const blob = new Blob([svgText], { type: 'image/svg+xml' });
+    const url  = URL.createObjectURL(blob);
+    const img  = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); };
+    img.src = url;
+    img.style.maxWidth = '100%';
+    img.style.maxHeight = '280px';
+    svgPreview.appendChild(img);
+
+    svgInfo.textContent = `${_meta.width}×${_meta.height}${_meta.isAnimated ? ' · animated' : ''}`;
+
+    // Sync output size
+    outW.value = _meta.width;
+    outH.value = _meta.height;
+
+    // Show/hide animation controls
+    animControls.classList.toggle('visible', _meta.isAnimated);
+    if (_meta.isAnimated) {
+      frameStrip.innerHTML = '';
+    }
+
+    btnConvert.disabled = false;
+    status('SVG loaded. Click Convert to render.', 'ok');
+  }
+
+  async function _convertCurrent() {
+    if (!_svgText) return;
+    status('Rendering…', 'busy');
+    btnConvert.disabled = true;
+
+    try {
+      const canvas = await Renderer.render(
+        _svgText,
+        +outW.value, +outH.value, +outScale.value,
+        _getBgColor(),
+        +frameTimeEl.value
+      );
+      _lastCanvas = canvas;
+      _showOutput(canvas);
+      btnDownload.disabled = false;
+      status(`Done — ${canvas.width}×${canvas.height}px PNG ready.`, 'ok');
+    } catch (err) {
+      status(`Error: ${err.message}`, 'err');
+    } finally {
+      btnConvert.disabled = false;
+    }
+  }
+
+  function _downloadPNG() {
+    if (!_lastCanvas) return;
+    _lastCanvas.toBlob(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${_fileName}.png`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toast('PNG downloaded!');
+    }, 'image/png');
+  }
+
+  async function _generateStrip() {
+    if (!_svgText) return;
+    status('Generating frame strip…', 'busy');
+    btnGenFrames.disabled = true;
+    frameStrip.innerHTML = '';
+
+    try {
+      const frames = await FrameCapture.generateFrames(
+        _svgText, +outW.value, +outH.value, 1,
+        _getBgColor(), +animDurEl.value, 10
+      );
+      for (const { canvas, timeMs } of frames) {
+        const thumb = document.createElement('div');
+        thumb.className = 'frame-thumb';
+        const img = new Image();
+        img.src = canvas.toDataURL('image/png');
+        const num = document.createElement('div');
+        num.className = 'frame-num';
+        num.textContent = `${timeMs}ms`;
+        thumb.appendChild(img);
+        thumb.appendChild(num);
+
+        // Click thumb → show in output
+        thumb.addEventListener('click', () => {
+          _showOutput(canvas);
+          _lastCanvas = canvas;
+          btnDownload.disabled = false;
+          frameTimeEl.value = timeMs;
+          frameTimeVal.textContent = `${timeMs} ms`;
+        });
+        frameStrip.appendChild(thumb);
+      }
+      status('Frame strip generated. Click a frame to preview.', 'ok');
+    } catch (err) {
+      status(`Error: ${err.message}`, 'err');
+    } finally {
+      btnGenFrames.disabled = false;
+    }
+  }
+
+  async function _exportAllFrames() {
+    if (!_svgText) return;
+    const count = parseInt(prompt('How many frames to export?', '24'), 10);
+    if (!count || count < 2) return;
+    status(`Exporting ${count} frames as ZIP…`, 'busy');
+    btnExportAll.disabled = true;
+
+    try {
+      const frames = await FrameCapture.generateFrames(
+        _svgText, +outW.value, +outH.value, +outScale.value,
+        _getBgColor(), +animDurEl.value, count
+      );
+      await FrameCapture.exportZip(frames, _fileName);
+      toast(`${count} frames exported!`);
+      status(`ZIP with ${count} PNGs downloaded.`, 'ok');
+    } catch (err) {
+      status(`Error: ${err.message}`, 'err');
+    } finally {
+      btnExportAll.disabled = false;
+    }
+  }
+
+  // ── Helpers ─────────────────────────────────────────
+
+  function _getBgColor() {
+    const m = bgMode.value;
+    if (m === 'transparent') return 'transparent';
+    if (m === 'white') return '#ffffff';
+    if (m === 'black') return '#000000';
+    return customBg.value;
+  }
+
+  function _showOutput(canvas) {
+    outputImg.src = canvas.toDataURL('image/png');
+    outputImg.style.display = 'block';
+    outputEmpty.style.display = 'none';
+    pngInfo.textContent = `${canvas.width}×${canvas.height}px`;
+  }
+
+  // ── Public helpers ──────────────────────────────────
+
+  function status(msg, type = '') {
+    $('status-msg').textContent = msg;
+    const dot = $('status-dot');
+    dot.className = 'status-dot' + (type ? ` ${type}` : '');
+  }
+
+  function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  return { init, status, toast };
+})();
+
+// ── Boot ──────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => UI.init());
+</script>
+</body>
+</html>
